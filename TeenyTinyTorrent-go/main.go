@@ -15,6 +15,12 @@ type Torrent struct {
   Announce string
   AnnounceList [][]string `bencode:"announce-list"` 
 }
+
+type connResponse struct {
+  Action  uint32
+  TransactionId uint32
+  ConnectionId uint64
+}
 func main(){
   if(len(os.Args) < 2){
     fmt.Println("Usage go run main <torrentFile>")
@@ -27,6 +33,7 @@ func main(){
     fmt.Println("Error parsing torrent err:" , err)
     os.Exit(1)
   }
+
   var trackersUrl []string
   for _ , v := range torrent.AnnounceList{
     for _, k := range v {
@@ -35,12 +42,12 @@ func main(){
   }
 
   parsedUrl, err := url.Parse(trackersUrl[3])
-  fmt.Println(parsedUrl.Host)
   if(err != nil ){
     fmt.Println("Error parsing url:", err)
   }
   connectTracker(parsedUrl.Host)
 }
+
 
 func parseTorrentFile(torrentPath string) (*Torrent, error){
 
@@ -57,6 +64,7 @@ func parseTorrentFile(torrentPath string) (*Torrent, error){
   return &torrent, nil  
 
 }
+
 func connectTracker(url string) {
   fmt.Printf("Connecting to tracker: %s \n", url)
   requestBuf, err := buildConnReq()
@@ -88,27 +96,48 @@ func connectTracker(url string) {
 
   _,_, err = conn.ReadFromUDP(responseBuffer)
   if err != nil {
-    fmt.Println("Error reading from responseBuffer")
+    fmt.Println("Error reading from responseBuffer: ", err)
     os.Exit(1)
   }
 
-  fmt.Println(responseBuffer)
+  parsedResponse, err := parseConnRes(responseBuffer)
+  if err != nil {
+    fmt.Println("Error parsing error")
+  }
 
+  fmt.Printf("Received transactionId: %d\n",parsedResponse.TransactionId)
+
+  if parsedResponse.TransactionId != binary.BigEndian.Uint32(requestBuf[12:16]){
+    fmt.Printf("mismatch on transactionId: sent %d received: %d", binary.BigEndian.Uint32(requestBuf[12:16]),parsedResponse.TransactionId )
+    os.Exit(1)
+  }
+
+  fmt.Println("Connection completed")
 }
 
 
 func buildConnReq() ([]byte, error) {
   buf := make([]byte, 16)
- 
+  //connectionId 
 	binary.BigEndian.PutUint32(buf[0:4], 0x417)
 	binary.BigEndian.PutUint32(buf[4:8], 0x27101980)
-
+  //action
 	binary.BigEndian.PutUint32(buf[8:12], 0)
-
+  //TransactionId
 	if _, err := rand.Read(buf[12:16]); err != nil {
 		return nil, err
 	}
-
+  fmt.Printf("Generated transactionId: %d\n", binary.BigEndian.Uint32(buf[12:16]))
 	return buf, nil
 
+}
+func parseConnRes(resp []byte) (connResponse, error) {
+    if len(resp) < 16 {
+        return connResponse{}, fmt.Errorf("response too short: got %d bytes, need at least 16", len(resp))
+    }
+    var parsedResponse connResponse
+    parsedResponse.Action = binary.BigEndian.Uint32(resp[0:4])
+    parsedResponse.TransactionId = binary.BigEndian.Uint32(resp[4:8])
+    parsedResponse.ConnectionId = binary.BigEndian.Uint64(resp[8:16])
+    return parsedResponse, nil
 }
