@@ -16,6 +16,23 @@ type Torrent struct {
   AnnounceList [][]string `bencode:"announce-list"` 
 }
 
+type TorrentInfo struct {
+	Name        string          `bencode:"name"`
+	PieceLength int64           `bencode:"piece length"`
+	Pieces      string          `bencode:"pieces"`
+	Private     int64           `bencode:"private"`
+	Files       []TorrentFile `bencode:"files"`
+	Length      int64           `bencode:"length"`
+}
+
+type TorrentFile struct {
+	Length int64    `bencode:"length"`
+	Path   []string `bencode:"path"`
+}
+
+
+var bitTorrentPort int = 6881
+
 type connResponse struct {
   Action  uint32
   TransactionId uint32
@@ -34,18 +51,14 @@ func main(){
     os.Exit(1)
   }
 
-  var trackersUrl []string
-  for _ , v := range torrent.AnnounceList{
-    for _, k := range v {
-      trackersUrl = append(trackersUrl, k)
-    }
+  id, err := generateId()
+  if err != nil {
+    fmt.Println("Error generating id")
+    os.Exit(1)
   }
+  fmt.Println(string(id))
 
-  parsedUrl, err := url.Parse(trackersUrl[3])
-  if(err != nil ){
-    fmt.Println("Error parsing url:", err)
-  }
-  connectTracker(parsedUrl.Host)
+  getPeers(*torrent)
 }
 
 
@@ -65,7 +78,21 @@ func parseTorrentFile(torrentPath string) (*Torrent, error){
 
 }
 
-func connectTracker(url string) {
+func getPeers(torrent Torrent) {
+
+  var trackersUrl []string
+  for _ , v := range torrent.AnnounceList{
+    for _, k := range v {
+      trackersUrl = append(trackersUrl, k)
+    }
+  }
+
+  parsedUrl, err := url.Parse(trackersUrl[3])
+  if(err != nil ){
+    fmt.Println("Error parsing url:", err)
+  }
+  
+  url := parsedUrl.Host
   fmt.Printf("Connecting to tracker: %s \n", url)
   requestBuf, err := buildConnReq()
   if(err != nil){
@@ -105,14 +132,15 @@ func connectTracker(url string) {
     fmt.Println("Error parsing error")
   }
 
-  fmt.Printf("Received transactionId: %d\n",parsedResponse.TransactionId)
 
   if parsedResponse.TransactionId != binary.BigEndian.Uint32(requestBuf[12:16]){
     fmt.Printf("mismatch on transactionId: sent %d received: %d", binary.BigEndian.Uint32(requestBuf[12:16]),parsedResponse.TransactionId )
     os.Exit(1)
   }
 
-  fmt.Println("Connection completed")
+  fmt.Println("Connection success")
+  buildAnnounceRequest(torrent, parsedResponse.ConnectionId)
+
 }
 
 
@@ -127,7 +155,6 @@ func buildConnReq() ([]byte, error) {
 	if _, err := rand.Read(buf[12:16]); err != nil {
 		return nil, err
 	}
-  fmt.Printf("Generated transactionId: %d\n", binary.BigEndian.Uint32(buf[12:16]))
 	return buf, nil
 
 }
@@ -141,3 +168,41 @@ func parseConnRes(resp []byte) (connResponse, error) {
     parsedResponse.ConnectionId = binary.BigEndian.Uint64(resp[8:16])
     return parsedResponse, nil
 }
+
+func generateId() ([]byte, error) {
+  buf := make([]byte, 20)
+  
+	if _, err := rand.Read(buf); err != nil {
+		return nil, err
+	}
+  copy(buf, []byte("-GV0001-"))
+
+  return buf, nil
+}
+
+func buildAnnounceRequest(torrent Torrent, connId uint64) ([]byte,error){
+  buf := make([]byte, 98) 
+  binary.BigEndian.PutUint64(buf[0:8], connId)
+
+  binary.BigEndian.PutUint32(buf[8:12], 1)
+
+	if _, err := rand.Read(buf[12:16]); err != nil {
+		return nil, err
+	}
+
+
+
+  fmt.Println("----**-----")
+  fmt.Println(connId)
+  fmt.Println(binary.BigEndian.Uint64(buf))
+  fmt.Println(binary.BigEndian.Uint32(buf[8:12]))
+  return buf, nil
+}
+
+
+
+
+
+
+
+
